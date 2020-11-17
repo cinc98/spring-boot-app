@@ -74,7 +74,7 @@ public class UserServiceImpl implements IUserService {
                 String token = UUID.randomUUID().toString();
                 verificationTokenService.save(saved.get(), token);
 
-                emailService.sendMail(user);
+                emailService.sendVerificationMail(user);
 
             }catch (Exception e){
                 e.printStackTrace();
@@ -89,4 +89,8 @@ public class UserServiceImpl implements IUserService {
         return userRepository.save(user);
     }
 
+    @Override
+    public Optional<User> findByEmail(String email) {
+        return userRepository.findByEmail(email);
+    }
 }

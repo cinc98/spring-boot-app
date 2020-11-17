@@ -4,18 +4,23 @@ package io.cinc.springbootsecurity.controller;
 import java.sql.Timestamp;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 
+import javax.mail.MessagingException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import io.cinc.springbootsecurity.dto.UserRequestDTO;
 import io.cinc.springbootsecurity.exception.ResourceConflictException;
+import io.cinc.springbootsecurity.model.PasswordResetToken;
 import io.cinc.springbootsecurity.model.User;
-import io.cinc.springbootsecurity.model.UserTokenState;
+import io.cinc.springbootsecurity.dto.UserTokenState;
 import io.cinc.springbootsecurity.model.VerificationToken;
-import io.cinc.springbootsecurity.repository.UserRepository;
 import io.cinc.springbootsecurity.security.TokenUtils;
 import io.cinc.springbootsecurity.security.auth.JwtAuthenticationRequest;
+import io.cinc.springbootsecurity.service.IEmailService;
+import io.cinc.springbootsecurity.service.IPasswordResetTokenService;
 import io.cinc.springbootsecurity.service.IUserService;
 import io.cinc.springbootsecurity.service.IVerificationTokenService;
 import io.cinc.springbootsecurity.service.impl.CustomUserDetailsService;
@@ -32,6 +37,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.ModelAndView;
 import org.springframework.web.util.UriComponentsBuilder;
 
 //Kontroler zaduzen za autentifikaciju korisnika
@@ -52,7 +58,13 @@ public class AuthenticationController {
     private IUserService userService;
 
     @Autowired
+    private IEmailService emailService;
+
+    @Autowired
     private IVerificationTokenService verificationTokenService;
+
+    @Autowired
+    private IPasswordResetTokenService passwordResetTokenService;
 
     @Autowired
     DozerBeanMapper mapper;
@@ -61,7 +73,7 @@ public class AuthenticationController {
     // Tada zna samo svoje korisnicko ime i lozinku i to prosledjuje na backend.
     @PostMapping("/login")
     public ResponseEntity<?> createAuthenticationToken(@RequestBody JwtAuthenticationRequest authenticationRequest,
-                                                                    HttpServletResponse response) {
+                                                       HttpServletResponse response) {
 
         try {
             Authentication authentication = authenticationManager
@@ -79,7 +91,7 @@ public class AuthenticationController {
 
             // Vrati token kao odgovor na uspesnu autentifikaciju
             return ResponseEntity.ok(new UserTokenState(jwt, expiresIn));
-        }catch (DisabledException disabledException){
+        } catch (DisabledException disabledException) {
             return ResponseEntity.ok("Your account is not activated");
 
         }
@@ -136,31 +148,91 @@ public class AuthenticationController {
     }
 
     @RequestMapping(value = "/activation", method = RequestMethod.GET)
-    public ResponseEntity<String> activation(@RequestParam("token") String token){
+    public ResponseEntity<String> activation(@RequestParam("token") String token) {
 
         VerificationToken verificationToken = verificationTokenService.findByToken(token);
 
-        if(verificationToken == null){
-            return new ResponseEntity<String>("Your verification token is invalid",HttpStatus.OK);
-        }else {
+        if (verificationToken == null) {
+            return new ResponseEntity<String>("Your verification token is invalid", HttpStatus.OK);
+        } else {
             User user = verificationToken.getUser();
 
-            if(!user.isEnabled()){
+            if (!user.isEnabled()) {
 
                 Timestamp currentTimestamp = new Timestamp(System.currentTimeMillis());
 
-                if(verificationToken.getExpiryDate().before(currentTimestamp)){
-                    return new ResponseEntity<String>("Your verification token has expired",HttpStatus.OK);
+                if (verificationToken.getExpiryDate().before(currentTimestamp)) {
+                    return new ResponseEntity<String>("Your verification token has expired", HttpStatus.OK);
 
-                }else {
+                } else {
                     user.setEnabled(true);
                     userService.update(user);
-                    return new ResponseEntity<String>("Your account is successfully activated",HttpStatus.OK);
+                    return new ResponseEntity<String>("Your account is successfully activated", HttpStatus.OK);
 
                 }
-            }else {
-                return new ResponseEntity<String>("Your account is already activated",HttpStatus.OK);
+            } else {
+                return new ResponseEntity<String>("Your account is already activated", HttpStatus.OK);
             }
         }
     }
+
+    // Process form submission from forgotPassword page
+    @RequestMapping(value = "/forgot", method = RequestMethod.POST)
+    public ResponseEntity<String> processForgotPasswordForm(@RequestBody String userEmail) {
+
+        // Lookup user in database by e-mail
+        Optional<User> optional = userService.findByEmail(userEmail);
+
+        if (!optional.isPresent()) {
+            return new ResponseEntity<String>("We didn't find an account for that e-mail address.", HttpStatus.BAD_REQUEST);
+        } else {
+
+            User user = optional.get();
+
+            if (user.isEnabled()) {
+                // Generate random 36-character string token for reset password
+                String token = UUID.randomUUID().toString();
+
+                // Save token to database
+                passwordResetTokenService.save(user, token);
+
+                try {
+                    emailService.sendPasswordMail(user);
+                    return new ResponseEntity<String>("Email sent", HttpStatus.OK);
+
+                } catch (MessagingException e) {
+                    e.printStackTrace();
+                    return new ResponseEntity<String>("Error sending email", HttpStatus.BAD_REQUEST);
+
+                }
+            } else {
+                return new ResponseEntity<String>("Your account is not activated", HttpStatus.BAD_REQUEST);
+            }
+        }
+    }
+
+    // Display form to reset password
+    @RequestMapping(value = "/forgotten", method = RequestMethod.GET)
+    public ResponseEntity<String> displayResetPasswordPage(@RequestParam("token") String token) {
+
+        PasswordResetToken passwordResetToken = passwordResetTokenService.findByToken(token);
+
+        if (passwordResetToken == null) {
+            return new ResponseEntity<String>("Your password reset token is invalid", HttpStatus.BAD_REQUEST);
+        } else {
+
+            Timestamp currentTimestamp = new Timestamp(System.currentTimeMillis());
+
+            if (passwordResetToken.getExpiryDate().before(currentTimestamp)) {
+                return new ResponseEntity<String>("Your password reset token has expired", HttpStatus.BAD_REQUEST);
+
+            } else {
+                return new ResponseEntity<String>("Your can reset password", HttpStatus.OK);
+
+            }
+
+        }
+    }
+
+
 }

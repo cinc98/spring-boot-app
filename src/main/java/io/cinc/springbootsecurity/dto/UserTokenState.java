@@ -1,4 +1,4 @@
-package io.cinc.springbootsecurity.model;
+package io.cinc.springbootsecurity.dto;
 
 // DTO koji enkapsulira generisani JWT i njegovo trajanje koji se vracaju klijentu
 public class UserTokenState {
